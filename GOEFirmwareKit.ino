@@ -34,7 +34,7 @@
 //#include <MsTimer2.h>         //Timer
 #include <SD.h>
 #include <ctype.h>
-#include "types.h"
+#include "goetypes.h"
 
 
 //FILE I/O
