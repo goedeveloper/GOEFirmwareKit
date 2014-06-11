@@ -1,21 +1,20 @@
 /*
- * 入出力ファイル
- * INPUT1 : 育成条件ファイル(config.txt)
- *          機器制御の設定
- * INPUT2 : 通信指示ファイル(comm.txt) 
- *          当ファイルに指示を登録する事でデバイスへの操作を行う。該当の操作を実施後はファイルを破棄。
- * OUTPUT1: 育成記録ファイル(record.txt)
- * OUTPUT2: 異常検出ファイル(errlog.txt)
+ * Input/Output files
+ * INPUT1 : Nurture Condition File(config.txt)
+ *          Setting file for the Plant Device
+ * INPUT2 : Communication Setting File(comm.txt) 
+ * OUTPUT1: Record File(record.txt)
+ * OUTPUT2: Error Log(errlog.txt)
  *
- * 計測センサ
- * 1. 温度(LM61CIZ)
+ * Device Censor
+ * 1. Tempurture(LM61CIZ)
  *    {AI2-Vout}
- * 2. 照度(S9648-100)
+ * 2. Lux(S9648-100)
  *    {AI1-Anode}
- * 3. 水位(2SC1815)
+ * 3. Water Level(2SC1815)
  *    {DO9-Correcta}
  *
- * 制御デバイス
+ * Device
  * 1. LED
  *    {D17(A3)}
  * 2. WATER PUMP
@@ -32,7 +31,7 @@
 // include the library code
 #include <Arduino.h>
 #include <LiquidCrystal.h>
-//#include <MsTimer2.h>         //割り込みタイマ用
+//#include <MsTimer2.h>         //Timer
 #include <SD.h>
 #include <ctype.h>
 #include "types.h"
@@ -45,54 +44,53 @@
 #define FILE_OUT_ERRLOG "errlog.txt"
 
 
-//Arduino ピン設定
+//Arduino Pin Setting
 //Digital Pins Map
-const int HLD_001 = 0;   //DO0(保留ピン)
-const int HLD_002 = 1;   //DO1(保留ピン)
+const int HLD_001 = 0;   //DO0(HOLD)
+const int HLD_002 = 1;   //DO1(HOLD)
 const int LCD_DB7 = 2;   //DO2(LCD用)
 const int LCD_DB6 = 3;   //DO3(LCD用)
-const int SDC_DT2 = 4;   //DO4(SCCard用) *CABLE SELECT PIN
+const int SDC_DT2 = 4;   //DO4(SCCard) *CABLE SELECT PIN
 const int LCD_DB4 = 5;   //DO5(LCD用)
 const int LCD_DB5 = 6;   //DO6(LCD用)
 const int LCD_EBL = 7;   //DO7(LCD用)
 const int LCD_RS_ = 8;   //DO8(LCD用)
-const int SEN_WTP = 9;   //DO9(水位センサ用)
-const int SDC_010 = 10;  //DO10(SDCard用) *SDカード用に開けておく CHIPSELECT
+const int SEN_WTP = 9;   //DO9(Water Level Censor)
+const int SDC_010 = 10;  //DO10(SDCard用) * Hold for SD Card -> CHIPSELECT
 const int SDC_CMD = 11;  //DO11(SCCard用)
 const int SDC_DT0 = 12;  //DO12(SCCard用)
 const int SDC_CLK = 13;  //DO13(SCCard用)
-const int LED_CTL = 17;  //LED制御用ピン(アナログ用を代用)
-const int WTP_CTL = 18;  //水ポンプ制御用ピン(アナログ用を代用)
-const int ARP_CTL = 19;  //エアレーション制御用ピン(アナログ用を代用)
+const int LED_CTL = 17;  //LED(Analog->Digital)
+const int WTP_CTL = 18;  //Water Pump(Analog->Digital)
+const int ARP_CTL = 19;  //Airation(Analog->Digital)
 //Analog Pins Map
-const int SEN_LUX = 1;  //A01(照度センサ用)
-const int SEN_CES = 2;  //A02(温度センサ用)
+const int SEN_LUX = 1;  //A01(Lux Censor)
+const int SEN_CES = 2;  //A02(Tempurture Censor)
 
 
 
 struct CONTROLCONFIG CC;
 struct RECORD REC = {0,0,0,0};
 
-//LCDの初期化
+//Initialize LCD
 LiquidCrystal lcd(LCD_RS_, LCD_EBL, LCD_DB4, 
                   LCD_DB5, LCD_DB6, LCD_DB7);
 
 /*
- * 初期設定
+ * Initialization
  */
 void setup() {
   
-	//SmartPlantの初期化
+	//Init SmartPlant
 	boolean ret = initializeSmartPlant();
 	if (!ret) { 
 		raiseError();
 		return;
 	}
 
-	//制御ファイルの取得
+	//Sett Config file
 	setControlConfig();
 	delay(1000);
-	//制御ファイルの取得
 	CC = getControlConfig();
 	delay(1000);
 
@@ -110,18 +108,16 @@ void loop() {
   
 	int n = 0;
 	do {
-		//機器への直通信制御指示(通信制御用ロジック)
 		if (directController() != 0) {
 			raiseError();
 		} else {
 			break;
 		}
 		n++;
-	} while (n < 3);  //エラー時は3回までトライ
+	} while (n < 3);
 
-	//制御開始
+	//Start Control
 	if (!stateChecker(&REC)) {
-		//異常時のロジック
 		stopPlant();
 		raiseError();
 		return;
@@ -133,34 +129,25 @@ void loop() {
 }
 
 /*
- * 各種センサ測定とデバイスの起動
+ * Measure and Activate Device
  */
 boolean stateChecker(struct RECORD *Rec) {
 
-	//時間の計測
 	Rec->run_t = millis();
-	//温度の計測
 	Rec->ces = readCes();
-	//照度の計測
 	Rec->lux = readLux();
-	//水位の計測
 	Rec->wlv = readWlv();
 
-	//温度チェック
 	if (Rec->ces < 0 || Rec->ces > 45) {
 		return false;
 	}
 
-	//照度、水位チェック
 	if (Rec->lux < 0 || Rec->wlv < 0) {
 		return false;
 	}
 
-	//LEDの起動・停止
 	ledActivator(Rec->lux);
-	//水ポンプの起動・停止
 	wtpActivator(Rec->wlv);
-	//エアーポンプの起動・停止
 	arpActivator(Rec->wlv);
 
 	return true;
@@ -192,11 +179,8 @@ void circuitChecker() {
   delay(1000);
 
 
-	//LEDの起動・停止
 //	ledActivator(readLux());
-	//水ポンプの起動・停止
 	wtpActivator(readWlv());
-	//エアーポンプの起動・停止
 	arpActivator(readWlv());
 
 
@@ -217,18 +201,17 @@ void lcdController(String title, String value){
  */
 boolean initializeSmartPlant() {
 
-  	//PCシリアル通信
   	Serial.begin(9600);
 
 	lcd.begin(16, 2);
 
-	pinMode(SEN_WTP, INPUT);    //水位センサのピン設定
-	pinMode(WTP_CTL, OUTPUT);   //水ポンプのピン設定(DO18)	
-	pinMode(ARP_CTL, OUTPUT);   //エアレーションのピン設定(DO19)	
+	pinMode(SEN_WTP, INPUT);    //Water Censor
+	pinMode(WTP_CTL, OUTPUT);   //Water Pump(DO18)	
+	pinMode(ARP_CTL, OUTPUT);   //Airation(DO19)	
 /*
-	pinMode(LED_CTL, OUTPUT);   //LEDのピン設定(DO17)
+	pinMode(LED_CTL, OUTPUT);   //LEDの(DO17)
 */
-	//SD Cardの初期化
+	//Initialize SD Card
 	pinMode(SDC_010, OUTPUT);
 	Serial.print("SD read/write start....\n");
 	if (!SD.begin(SDC_DT2)) {
@@ -268,7 +251,6 @@ CONTROLCONFIG getControlConfig() {
 	f.close();
 	Serial.print("end:\n");
 
-	//構造体に代入
 	cc.ces_dev = num[0];       //温度偏差 ex) ±5%
 	cc.ces_thd = num[1];       //温度しきい値 threshold
 	cc.lux_thd = num[2];       //照度しきい値
@@ -334,7 +316,7 @@ boolean setControlConfig() {
 
 
 /*
- * エラーを記録する
+ * Log Error
  */
 boolean raiseError() {
 	return true;
@@ -347,7 +329,7 @@ int convertToInt(String value){
 }
 
 /*
- * 計測値を記録する
+ * Record Measurement Value
  */
 boolean addRecord(struct RECORD *Rec ){
 	String str = "";
@@ -366,7 +348,7 @@ boolean addRecord(struct RECORD *Rec ){
 
 
 /*
- * プラントを停止する
+ * Stop Plant
  */
 void stopPlant() {
 	digitalWrite(LED_CTL, LOW);
@@ -375,7 +357,7 @@ void stopPlant() {
 }
 
 /*
- * 機器への制御指示
+ * Direct Contorol for Smart Plant
  */
 boolean deviceindicater() {
 	//外部連絡用のファイル取得
@@ -385,18 +367,18 @@ boolean deviceindicater() {
 }
 
 /*
- * 温度センサから数値計算し、温度を返却
+ * Measure Tempurture
  */
 int readCes() {
 	int ans, ces, tvl;
-	ans = analogRead(SEN_CES);            //Analog Pin 0からセンサー値を読み込む
-	tvl = map(ans, 0, 1023, 0, 5000);     //センサー値を電圧に変換する
-	ces = map(tvl, 300, 1600, -30, 100);  //電圧から温度に変換する
+	ans = analogRead(SEN_CES);            //Read Value from Analog Pin 0
+	tvl = map(ans, 0, 1023, 0, 5000);     //Convert value considering Voltage
+	ces = map(tvl, 300, 1600, -30, 100);  //Convert Vol to Tempurture
 	return ces;
 }
 
 /*
- * 照度センサから数値を計算しLUXを返却
+ * Lux
  */
 int readLux() {
 	int ans;
@@ -409,14 +391,14 @@ int readLux() {
 }
 
 /*
- * 水位センサから水位レベルを読み込み、数値を返却
+ * Read Water Level, Return the Value
  */
 int readWlv() {
 	return digitalRead(SEN_WTP);
 }
 
 /*
- * 制御機器のダイレクトコントロール
+ * Direct Control for Smart Plant
  */
 int directController(){
 	//外部からの指示ファイルを読み込み
@@ -436,8 +418,7 @@ void dosomething(){
 }
 
 /*
- * LED起動・停止
- * 起動時間を返却
+ * Activate/Stop LED
  */
 void ledActivator(int lux) {
 	if (lux < CC.lux_thd) {
@@ -448,7 +429,7 @@ void ledActivator(int lux) {
 }
 
 /*
- * WaterPump起動・停止
+ * Activate/Stop WaterPump
  */
 void wtpActivator(int waterlevel) {
 	if (waterlevel == LOW) {
@@ -459,7 +440,7 @@ void wtpActivator(int waterlevel) {
 }
 
 /*
- * エアーポンプ起動・停止
+ * Activate/Stop Airation
  */
 void arpActivator(int waterlevel) {
 	if (waterlevel == HIGH) {
@@ -469,30 +450,4 @@ void arpActivator(int waterlevel) {
 	}
 }
 
-/*
-
-・テスト
-センサ系のテスト
- ・温度（回路をつくってから）
- ・照度（回路をつくってから）
- ・水位（回路をつくってから）
-
-デバイス系のテスト
- ・LCD
- ・SDの読み込み
- ・SDの書き込み
- ・LED
- ・エアポンプ
- ・水ポンプ
-
-*/
-/*
-・次期回路を作る時の作業
- 1.12V, DC-DCでの回路
- 2.12VからLED
- 3.12Vからエアポンプ
- 4.12Vから水ポンプ（保留）
- 5.12Vからファン
- 6.湿度
-*/
 
