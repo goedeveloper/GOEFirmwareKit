@@ -360,9 +360,6 @@ void stopPlant() {
  * Direct Contorol for Smart Plant
  */
 boolean deviceindicater() {
-	//外部連絡用のファイル取得
-	//指示パラメータの取得
-	//取得後はファイルを破棄
 	return true;
 }
 
@@ -401,7 +398,7 @@ int readWlv() {
  * Direct Control for Smart Plant
  */
 int directController(){
-	//外部からの指示ファイルを読み込み
+	//Read Direction Controller File
 	int di; //= deviceindicator();
 	switch (di) {
         /*
